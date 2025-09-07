@@ -20,9 +20,11 @@ Attribute Back.VB_VarHelpID = -1
 Private mParent As ProxyMain            ' the form (see below)
 Private mBackReady As Boolean
 Private mQueueToBack As String          ' temp buffer until Back connects
+Private mNameTag As String ' Added to store nameTag
 
 Friend Sub Init(ByVal accepted As cTlsSocket, ByVal parent As ProxyMain, _
                 ByVal backendHost As String, ByVal backendPort As Long, _
+                ByVal nameTag As String, _
                 Optional ByVal backendUseTls As Boolean = False, _
                 Optional ByVal clientPfxPath As String = "", _
                 Optional ByVal clientPfxPassword As String = "")
@@ -31,6 +33,7 @@ Friend Sub Init(ByVal accepted As cTlsSocket, ByVal parent As ProxyMain, _
 
     Set Back = New cTlsSocket
     mBackReady = False
+    mNameTag = nameTag ' Store nameTag
     mQueueToBack = vbNullString
 
         If backendUseTls And Len(clientPfxPath) > 0 Then
@@ -43,7 +46,7 @@ Friend Sub Init(ByVal accepted As cTlsSocket, ByVal parent As ProxyMain, _
     End If
 
     If Not Back.Connect(backendHost, backendPort, UseTls:=backendUseTls) Then
-        mParent.Trace "backend connect failed"
+        mParent.Trace "Backend connect failed for " & mNameTag & " (" & BackendHost & ":" & BackendPort & ")"
         CloseBoth
     End If
 End Sub

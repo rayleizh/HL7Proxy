@@ -39,7 +39,8 @@ Private Sub Form_Load()
     Set OutboundSinks = New Collection
 
     ' Default log file (edit if you prefer)
-    LogPath = "c:\temp\HL7Proxy.log"
+    LogPath = ReadRegistryRaw("HKLM\SOFTWARE\Meridian\HL7Proxy\LogFile", "c:\temp\HL7Proxy.log")
+    
     WriteLog "==== HL7Proxy starting ===="
 
     ' Spin up listeners for every HL7Server* service that is TLSProxyEnabled
@@ -221,9 +222,9 @@ Friend Sub EndpointAccepted(ByVal cli As cTlsSocket, _
 
     Dim s As New ProxySession
     If BackendUseTls Then
-        s.Init cli, Me, BackendHost, BackendPort, True, ClientPfxPath, ClientPfxPassword
+        s.Init cli, Me, BackendHost, BackendPort, nameTag, True, ClientPfxPath, ClientPfxPassword
     Else
-        s.Init cli, Me, BackendHost, BackendPort
+        s.Init cli, Me, BackendHost, BackendPort, nameTag
     End If
     Sessions.Add s
     WriteLog "Accepted client (" & nameTag & ")"
