@@ -773,15 +773,42 @@ Public Function Connect( _
     m_eLocalFeatures = LocalFeatures
     Set m_oRootCa = RootCa
     m_sAlpnProtocols = AlpnProtocols
+    Debug.Print "cTlsSocket.Connect: Host=" & HostAddress & ", Port=" & HostPort & ", UseTls=" & UseTls & ", LocalFeatures=" & Hex(LocalFeatures)
     If Not m_oSocket.Connect(HostAddress, HostPort) Then
+        Debug.Print "cTlsSocket.Connect: m_oSocket.Connect failed, Error: " & m_oSocket.LastError.Description
         GoTo QH
     End If
-    '-- success
+    If m_bUseTls Then
+        If Not TlsInitClient(m_uCtx, m_sRemoteHostName, m_eLocalFeatures, Me, m_sAlpnProtocols) Then
+            Debug.Print "cTlsSocket.Connect: TlsInitClient failed, Error: " & TlsGetLastError(m_uCtx)
+            GoTo QH
+        End If
+        Dim baEmpty() As Byte
+        If Not TlsHandshake(m_uCtx, baEmpty, 0, m_baSendBuffer, m_lSendPos) Then
+            Debug.Print "cTlsSocket.Connect: TlsHandshake failed, Error: " & TlsGetLastError(m_uCtx)
+            GoTo QH
+        End If
+        If Not pvHandleSend() Then
+            Debug.Print "cTlsSocket.Connect: pvHandleSend failed, Error: " & m_oSocket.LastError.Description
+            GoTo QH
+        End If
+    End If
+    
+    ' Note: Do NOT start TLS here.
+    ' TLS is started in m_oAsyncSocket_OnConnect via pvHandleConnect/StartTls,
+    ' which only runs after the TCP connect is actually established.
+    'If Not m_oSocket.Connect(HostAddress, HostPort) Then
+    '    Debug.Print "cTlsSocket.Connect: pvHandleSend failed, Error: " & m_oSocket.LastError.Description
+    '    GoTo QH
+    'End If
+
+    '--- success
     Connect = True
 QH:
     Exit Function
 EH:
     PrintError FUNC_NAME
+    Debug.Print "cTlsSocket.Connect: Unexpected error: " & Err.Description
     Resume QH
 End Function
 

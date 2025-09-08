@@ -13,14 +13,14 @@ Attribute VB_PredeclaredId = False
 Attribute VB_Exposed = False
 Option Explicit
 
-Private WithEvents Front As cTlsSocket  ' accepted client (TLS or plain)
+Private WithEvents Front As cTlsSocket
 Attribute Front.VB_VarHelpID = -1
-Private WithEvents Back  As cTlsSocket  ' outbound to backend (plain or TLS)
+Private WithEvents Back As cTlsSocket
 Attribute Back.VB_VarHelpID = -1
-Private mParent As ProxyMain            ' the form (see below)
+Private mParent As ProxyMain
 Private mBackReady As Boolean
-Private mQueueToBack As String          ' temp buffer until Back connects
-Private mNameTag As String ' Added to store nameTag
+Private mQueueToBack As String
+Private mNameTag As String
 
 Friend Sub Init(ByVal accepted As cTlsSocket, ByVal parent As ProxyMain, _
                 ByVal backendHost As String, ByVal backendPort As Long, _
@@ -30,27 +30,22 @@ Friend Sub Init(ByVal accepted As cTlsSocket, ByVal parent As ProxyMain, _
                 Optional ByVal clientPfxPassword As String = "")
     Set Front = accepted
     Set mParent = parent
-
     Set Back = New cTlsSocket
     mBackReady = False
-    mNameTag = nameTag ' Store nameTag
+    mNameTag = nameTag
     mQueueToBack = vbNullString
 
-        If backendUseTls And Len(clientPfxPath) > 0 Then
-        Dim certs As New Collection
-        certs.Add clientPfxPath
-        Set Back.LocalCertificates = certs
-        Dim keys As New Collection
-        If Len(clientPfxPassword) > 0 Then keys.Add clientPfxPassword
-        Set Back.LocalPrivateKey = keys
+    mParent.Trace "Initiating connection to " & backendHost & ":" & backendPort & " (TLS=" & backendUseTls & ") for " & mNameTag
+    If backendUseTls Then
+        mParent.Trace "TLS enabled for backend, no client certificate used, LocalFeatures=ucsTlsSupportTls12 for " & mNameTag
     End If
-
-    If Not Back.Connect(backendHost, backendPort, UseTls:=backendUseTls) Then
-        mParent.Trace "Backend connect failed for " & mNameTag & " (" & BackendHost & ":" & BackendPort & ")"
+    On Error Resume Next
+    If Not Back.Connect(backendHost, backendPort, UseTls:=backendUseTls, LocalFeatures:=ucsTlsSupportTls12) Then
+        mParent.Trace "ERROR: Backend connect failed for " & mNameTag & " (" & backendHost & ":" & backendPort & "), Error: " & Err.Description
         CloseBoth
     End If
+    On Error GoTo 0
 End Sub
-
 
 Friend Sub ShutDown()
     CloseBoth
@@ -58,46 +53,96 @@ End Sub
 
 Private Sub Back_OnConnect()
     mBackReady = True
+    mParent.Trace "Backend connected for " & mNameTag
     If LenB(mQueueToBack) > 0 Then
         Dim a() As Byte
         a = StrConv(mQueueToBack, vbFromUnicode)
+        On Error Resume Next
         Back.SendArray a
-        mQueueToBack = vbNullString
+        If Err.Number = 0 Then
+            mParent.Trace "Sent " & UBound(a) + 1 & " bytes to backend for " & mNameTag & ": " & Left(mQueueToBack, 100) & "..."
+            mParent.Trace "Raw bytes sent: " & ByteArrayToHex(a)
+            mQueueToBack = vbNullString
+        Else
+            mParent.Trace "ERROR: Failed to send buffered data to backend for " & mNameTag & ": " & Err.Description
+        End If
+        On Error GoTo 0
     End If
 End Sub
 
 Private Sub Front_OnReceive()
     Dim a() As Byte
-    If Not Front.ReceiveArray(a) Then Exit Sub
-    If mBackReady Then
-        Back.SendArray a
+    If Not Front.ReceiveArray(a) Then
+        mParent.Trace "ERROR: Front.ReceiveArray failed for " & mNameTag
+        Exit Sub
+    End If
+    mParent.Trace "Front received " & UBound(a) + 1 & " bytes for " & mNameTag & ": " & Left(StrConv(a, vbUnicode), 100) & "..."
+    mParent.Trace "Raw bytes received: " & ByteArrayToHex(a)
+    If EndsWithFS_CR_Bytes(a) Then
+        mParent.Trace "Valid MLLP frame detected for " & mNameTag
+        If mBackReady Then
+            On Error Resume Next
+            Back.SendArray a
+            If Err.Number = 0 Then
+                mParent.Trace "Sent " & UBound(a) + 1 & " bytes to backend for " & mNameTag & ": " & Left(StrConv(a, vbUnicode), 100) & "..."
+                mParent.Trace "Raw bytes sent: " & ByteArrayToHex(a)
+            Else
+                mParent.Trace "ERROR: Failed to send to backend for " & mNameTag & ": " & Err.Description
+                mQueueToBack = mQueueToBack & StrConv(a, vbUnicode)
+                mParent.Trace "Buffered " & Len(mQueueToBack) & " characters for " & mNameTag & ": " & Left(mQueueToBack, 100) & "..."
+            End If
+            On Error GoTo 0
+        Else
+            mQueueToBack = mQueueToBack & StrConv(a, vbUnicode)
+            mParent.Trace "Buffered " & Len(mQueueToBack) & " characters for " & mNameTag & ": " & Left(mQueueToBack, 100) & "..."
+        End If
     Else
-        ' buffer until back-end connects
         mQueueToBack = mQueueToBack & StrConv(a, vbUnicode)
+        mParent.Trace "Incomplete MLLP frame, buffering " & Len(mQueueToBack) & " characters for " & mNameTag & ": " & Left(mQueueToBack, 100) & "..."
     End If
 End Sub
 
 Private Sub Back_OnReceive()
     Dim a() As Byte
-    If Not Back.ReceiveArray(a) Then Exit Sub
-    Front.SendArray a
+    If Not Back.ReceiveArray(a) Then
+        mParent.Trace "ERROR: Back.ReceiveArray failed for " & mNameTag
+        Exit Sub
+    End If
+    mParent.Trace "Back received " & UBound(a) + 1 & " bytes for " & mNameTag & ": " & Left(StrConv(a, vbUnicode), 100) & "..."
+    mParent.Trace "Raw bytes received: " & ByteArrayToHex(a)
+    If EndsWithFS_CR_Bytes(a) Then
+        mParent.Trace "Valid MLLP frame detected for " & mNameTag
+        On Error Resume Next
+        Front.SendArray a
+        If Err.Number = 0 Then
+            mParent.Trace "Sent " & UBound(a) + 1 & " bytes to front for " & mNameTag & ": " & Left(StrConv(a, vbUnicode), 100) & "..."
+            mParent.Trace "Raw bytes sent: " & ByteArrayToHex(a)
+        Else
+            mParent.Trace "ERROR: Failed to send to front for " & mNameTag & ": " & Err.Description
+        End If
+        On Error GoTo 0
+    Else
+        mParent.Trace "Incomplete MLLP frame from backend, buffering " & Len(mQueueToBack) & " characters for " & mNameTag & ": " & Left(mQueueToBack, 100) & "..."
+    End If
 End Sub
 
 Private Sub Front_OnClose()
+    mParent.Trace "Front closed for " & mNameTag
     CloseBoth
 End Sub
 
 Private Sub Back_OnClose()
+    mParent.Trace "Back closed for " & mNameTag
     CloseBoth
 End Sub
 
 Private Sub Front_OnError(ByVal ErrorCode As Long, ByVal EventMask As UcsAsyncSocketEventMaskEnum)
-    mParent.Trace "front error " & CStr(ErrorCode)
+    mParent.Trace "Front error " & ErrorCode & " (EventMask=" & EventMask & ") for " & mNameTag
     CloseBoth
 End Sub
 
 Private Sub Back_OnError(ByVal ErrorCode As Long, ByVal EventMask As UcsAsyncSocketEventMaskEnum)
-    mParent.Trace "back error " & CStr(ErrorCode)
+    mParent.Trace "Back error " & ErrorCode & " (EventMask=" & EventMask & ") for " & mNameTag
     CloseBoth
 End Sub
 
@@ -105,9 +150,43 @@ Private Sub CloseBoth()
     On Error Resume Next
     If Not Front Is Nothing Then Front.Close_
     If Not Back Is Nothing Then Back.Close_
+    mParent.Trace "Closed both sockets for " & mNameTag
     mParent.SessionClosed Me
     Set Front = Nothing
     Set Back = Nothing
     Set mParent = Nothing
 End Sub
+
+Private Function EndsWithFS_CR_Bytes(b() As Byte) As Boolean
+    On Error Resume Next
+    If UBound(b) < 0 Then
+        mParent.Trace "MLLP check failed: Byte array empty for " & mNameTag
+        EndsWithFS_CR_Bytes = False
+        Exit Function
+    End If
+    Dim lastByte As Byte, secondLastByte As Byte
+    If UBound(b) >= 1 Then
+        secondLastByte = b(UBound(b) - 1)
+        lastByte = b(UBound(b))
+    ElseIf UBound(b) = 0 Then
+        secondLastByte = 0
+        lastByte = b(0)
+    End If
+    mParent.Trace "MLLP check: Last byte=" & Hex(lastByte) & ", Second last byte=" & Hex(secondLastByte) & ", Array length=" & UBound(b) + 1 & " for " & mNameTag
+    EndsWithFS_CR_Bytes = (secondLastByte = &H1C And lastByte = &HD)
+    On Error GoTo 0
+End Function
+
+Private Function ByteArrayToHex(b() As Byte) As String
+    Dim i As Long
+    Dim s As String
+    If UBound(b) < 0 Then
+        ByteArrayToHex = "(empty)"
+        Exit Function
+    End If
+    For i = 0 To UBound(b)
+        s = s & Right("0" & Hex(b(i)), 2) & " "
+    Next i
+    ByteArrayToHex = Trim(s)
+End Function
 
