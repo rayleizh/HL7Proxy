@@ -210,9 +210,9 @@ Private Declare Function WSACleanup Lib "ws2_32" () As Long
 Private Declare Function WSAAsyncGetHostByName Lib "ws2_32" (ByVal hWnd As Long, ByVal wMsg As Long, ByVal strHostName As String, lpBuf As Any, ByVal BufLen As Long) As Long
 Private Declare Function WSAAsyncSelect Lib "ws2_32" (ByVal s As Long, ByVal hWnd As Long, ByVal wMsg As Long, ByVal lEvent As Long) As Long
 Private Declare Function WSACancelAsyncRequest Lib "ws2_32" (ByVal hAsyncTaskHandle As Long) As Long
-Private Declare Function ws_connect Lib "ws2_32" Alias "connect" (ByVal s As Long, ByRef Name As SOCKADDR_IN, ByVal namelen As Long) As Long
+Private Declare Function ws_connect Lib "ws2_32" Alias "connect" (ByVal s As Long, ByRef Name As SOCKADDR_IN, ByVal nameLen As Long) As Long
 Private Declare Function ws_socket Lib "ws2_32" Alias "socket" (ByVal af As Long, ByVal s_type As Long, ByVal Protocol As Long) As Long
-Private Declare Function ws_bind Lib "ws2_32" Alias "bind" (ByVal s As Long, ByRef Name As SOCKADDR_IN, ByRef namelen As Long) As Long
+Private Declare Function ws_bind Lib "ws2_32" Alias "bind" (ByVal s As Long, ByRef Name As SOCKADDR_IN, ByRef nameLen As Long) As Long
 Private Declare Function ws_htonl Lib "ws2_32" Alias "htonl" (ByVal hostlong As Long) As Long
 Private Declare Function ws_htons Lib "ws2_32" Alias "htons" (ByVal hostshort As Long) As Integer
 Private Declare Function ws_ntohs Lib "ws2_32" Alias "ntohs" (ByVal netshort As Long) As Integer
@@ -221,8 +221,8 @@ Private Declare Function ws_recv Lib "ws2_32" Alias "recv" (ByVal s As Long, ByR
 Private Declare Function ws_recvfrom Lib "ws2_32" Alias "recvfrom" (ByVal s As Long, ByRef buf As Any, ByVal BufLen As Long, ByVal Flags As Long, ByRef from As SOCKADDR_IN, ByRef fromlen As Long) As Long
 Private Declare Function ws_send Lib "ws2_32" Alias "send" (ByVal s As Long, ByRef buf As Any, ByVal BufLen As Long, ByVal Flags As Long) As Long
 Private Declare Function ws_sendto Lib "ws2_32" Alias "sendto" (ByVal s As Long, ByRef buf As Any, ByVal BufLen As Long, ByVal Flags As Long, ByRef toaddr As SOCKADDR_IN, ByVal tolen As Long) As Long
-Private Declare Function ws_getpeername Lib "ws2_32" Alias "getpeername" (ByVal s As Long, ByRef Name As SOCKADDR_IN, ByRef namelen As Long) As Long
-Private Declare Function ws_getsockname Lib "ws2_32" Alias "getsockname" (ByVal s As Long, ByRef Name As SOCKADDR_IN, ByRef namelen As Long) As Long
+Private Declare Function ws_getpeername Lib "ws2_32" Alias "getpeername" (ByVal s As Long, ByRef Name As SOCKADDR_IN, ByRef nameLen As Long) As Long
+Private Declare Function ws_getsockname Lib "ws2_32" Alias "getsockname" (ByVal s As Long, ByRef Name As SOCKADDR_IN, ByRef nameLen As Long) As Long
 Private Declare Function ws_shutdown Lib "ws2_32" Alias "shutdown" (ByVal s As Long, ByVal How As Long) As Long
 Private Declare Function ws_listen Lib "ws2_32" Alias "listen" (ByVal s As Long, ByVal backlog As Long) As Long
 Private Declare Function ws_accept Lib "ws2_32" Alias "accept" (ByVal s As Long, Addr As Any, addrlen As Any) As Long
@@ -231,7 +231,7 @@ Private Declare Function ws_getsockopt Lib "ws2_32" Alias "getsockopt" (ByVal s 
 Private Declare Function ws_setsockopt Lib "ws2_32" Alias "setsockopt" (ByVal s As Long, ByVal Level As Long, ByVal optname As Long, optval As Any, ByVal optlen As Long) As Long
 Private Declare Function ws_inet_addr Lib "ws2_32" Alias "inet_addr" (ByVal cp As String) As Long
 Private Declare Function ws_gethostbyname Lib "ws2_32" Alias "gethostbyname" (ByVal host_name As String) As Long
-Private Declare Function ws_gethostname Lib "ws2_32" Alias "gethostname" (ByVal host_name As String, ByVal namelen As Long) As Long
+Private Declare Function ws_gethostname Lib "ws2_32" Alias "gethostname" (ByVal host_name As String, ByVal nameLen As Long) As Long
 #If ImplSync Then
     Private Declare Function PeekMessage Lib "user32" Alias "PeekMessageW" (lpMsg As APIMSG, ByVal hWnd As Long, ByVal wMsgFilterMin As Long, ByVal wMsgFilterMax As Long, ByVal wRemoveMsg As Long) As Long
     Private Declare Function DispatchMessage Lib "user32" Alias "DispatchMessageW" (lpMsg As APIMSG) As Long
@@ -698,37 +698,46 @@ End Sub
 Public Function Connect(HostAddress As String, ByVal HostPort As Long) As Boolean
     Const FUNC_NAME     As String = "Connect"
     Dim uAddr           As SOCKADDR_IN
-    
+
     On Error GoTo EH
+
     If m_hSocket = INVALID_SOCKET Then
         Create
     End If
+
+    Debug.Print "cAsyncSocket.Connect: connect " & HostAddress & ":" & CStr(HostPort)
+
     If Not pvToSockAddr(HostAddress, HostPort, uAddr, Resolve:=False) Then
+        ' async DNS resolve path
         ReDim m_uGetHostByName(0 To 0) As UcsAsyncGetHostByNameType
         m_uGetHostByName(0).Port = HostPort
-        '--- note: concat "" to prevent passing NULL for HostAddress
         m_uGetHostByName(0).Handle = WSAAsyncGetHostByName(m_oHelperWindow.frMessageHWnd, WM_SOCKET_RESOLVE, HostAddress & "", m_uGetHostByName(0).Buffer(0), MAXGETHOSTSTRUCT)
         If m_uGetHostByName(0).Handle = 0 Then
             m_lLastError = Err.LastDllError
+            Debug.Print "cAsyncSocket.Connect: DNS start FAILED, wsa=" & m_lLastError
             Erase m_uGetHostByName
             GoTo QH
         End If
         m_lLastError = WSAEWOULDBLOCK
+        Debug.Print "cAsyncSocket.Connect: DNS resolve pending (WSAEWOULDBLOCK)"
     Else
         If SockOpt(ucsSsoType) = ucsSckStream Then
             If ws_connect(m_hSocket, uAddr, LenB(uAddr)) = SOCKET_ERROR Then
                 m_lLastError = Err.LastDllError
                 If m_lLastError <> WSAEWOULDBLOCK Then
+                    Debug.Print "cAsyncSocket.Connect: CONNECT FAILED, wsa=" & m_lLastError
                     GoTo QH
                 End If
+                Debug.Print "cAsyncSocket.Connect: async connect pending (WSAEWOULDBLOCK)"
             Else
+                Debug.Print "cAsyncSocket.Connect: connect completed immediately -> posting OnConnect"
                 PostEvent ucsSfdConnect
             End If
         Else
             PostEvent ucsSfdConnect
         End If
     End If
-    '--- success
+
     m_lLastError = 0
     Connect = True
 QH:
@@ -736,6 +745,7 @@ QH:
 EH:
     PrintError FUNC_NAME
 End Function
+
 
 Public Function IOCtl(ByVal Command As Long, Argument As Long) As Boolean
     Const FUNC_NAME     As String = "IOCtl"

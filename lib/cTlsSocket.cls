@@ -759,58 +759,60 @@ EH:
 End Function
 
 Public Function Connect( _
-            HostAddress As String, _
+            ByVal HostAddress As String, _
             ByVal HostPort As Long, _
             Optional ByVal UseTls As Boolean = True, _
             Optional ByVal LocalFeatures As UcsTlsLocalFeaturesEnum, _
-            Optional RootCa As cTlsSocket, _
-            Optional AlpnProtocols As String) As Boolean
-    Const FUNC_NAME     As String = "Connect"
-    
+            Optional ByVal RootCa As cTlsSocket, _
+            Optional ByVal AlpnProtocols As String) As Boolean
+
+    Const FUNC_NAME As String = "Connect"
+    Dim lErrNumber  As Long       ' <-- declare
+    Dim sErrSource  As String     ' <-- declare
+    Dim sErrMsg     As String
+
     On Error GoTo EH
-    m_bUseTls = UseTls
+
+    m_bUseTls         = UseTls
     m_sRemoteHostName = HostAddress
-    m_eLocalFeatures = LocalFeatures
-    Set m_oRootCa = RootCa
-    m_sAlpnProtocols = AlpnProtocols
-    Debug.Print "cTlsSocket.Connect: Host=" & HostAddress & ", Port=" & HostPort & ", UseTls=" & UseTls & ", LocalFeatures=" & Hex(LocalFeatures)
-    If Not m_oSocket.Connect(HostAddress, HostPort) Then
-        Debug.Print "cTlsSocket.Connect: m_oSocket.Connect failed, Error: " & m_oSocket.LastError.Description
-        GoTo QH
-    End If
+    m_eLocalFeatures  = LocalFeatures
+    Set m_oRootCa     = RootCa
+    m_sAlpnProtocols  = AlpnProtocols
+
+    Debug.Print "cTlsSocket.Connect: begin Host=" & HostAddress & ":" & CStr(HostPort) & _
+                ", TLS=" & CStr(m_bUseTls) & ", LocalFeatures=&H" & Hex$(LocalFeatures)
+
+    ' Prepare TLS context only. Do NOT handshake here.
     If m_bUseTls Then
         If Not TlsInitClient(m_uCtx, m_sRemoteHostName, m_eLocalFeatures, Me, m_sAlpnProtocols) Then
-            Debug.Print "cTlsSocket.Connect: TlsInitClient failed, Error: " & TlsGetLastError(m_uCtx)
+            sErrMsg = TlsGetLastError(m_uCtx, lErrNumber, sErrSource)
+            Debug.Print "cTlsSocket.Connect: TlsInitClient failed -> hr=&H" & Hex$(lErrNumber) & _
+                        " src=" & sErrSource & " msg=" & sErrMsg
+            pvSetLastError lErrNumber, sErrSource, sErrMsg
             GoTo QH
         End If
-        Dim baEmpty() As Byte
-        If Not TlsHandshake(m_uCtx, baEmpty, 0, m_baSendBuffer, m_lSendPos) Then
-            Debug.Print "cTlsSocket.Connect: TlsHandshake failed, Error: " & TlsGetLastError(m_uCtx)
-            GoTo QH
-        End If
-        If Not pvHandleSend() Then
-            Debug.Print "cTlsSocket.Connect: pvHandleSend failed, Error: " & m_oSocket.LastError.Description
-            GoTo QH
-        End If
+        Debug.Print "cTlsSocket.Connect: TLS context prepared; handshake will start in OnConnect"
     End If
-    
-    ' Note: Do NOT start TLS here.
-    ' TLS is started in m_oAsyncSocket_OnConnect via pvHandleConnect/StartTls,
-    ' which only runs after the TCP connect is actually established.
-    'If Not m_oSocket.Connect(HostAddress, HostPort) Then
-    '    Debug.Print "cTlsSocket.Connect: pvHandleSend failed, Error: " & m_oSocket.LastError.Description
-    '    GoTo QH
-    'End If
 
-    '--- success
+    ' Kick off **async** TCP connect
+    If Not m_oSocket.Connect(HostAddress, HostPort) Then
+        Debug.Print "cTlsSocket.Connect: m_oSocket.Connect FAILED, err=" & Err.Number & _
+                    " '" & Err.Description & "'"
+        pvSetLastError Err.Number, MODULE_NAME & ".Connect", Err.Description
+        GoTo QH
+    End If
+
+    Debug.Print "cTlsSocket.Connect: connect initiated (async), waiting for OnConnect"
     Connect = True
-QH:
     Exit Function
+
 EH:
-    PrintError FUNC_NAME
-    Debug.Print "cTlsSocket.Connect: Unexpected error: " & Err.Description
-    Resume QH
+    Debug.Print "cTlsSocket.Connect: VB error " & Err.Number & " '" & Err.Description & "'"
+QH:
+    Connect = False
 End Function
+
+
 
 Public Function StartTls( _
             Optional RemoteHostName As String, _
@@ -1825,22 +1827,41 @@ End Sub
 '=========================================================================
 
 Private Sub m_oAsyncSocket_OnConnect()
-    Const FUNC_NAME     As String = "m_oAsyncSocket_OnConnect"
-    
+    Const FUNC_NAME As String = "m_oAsyncSocket_OnConnect"
+    Dim lErrNumber  As Long     ' <-- declare
+    Dim sErrSource  As String   ' <-- declare
+    Dim sErrMsg     As String
+
     On Error GoTo EH
+
+    Debug.Print "cTlsSocket.OnConnect: TCP established. TLS=" & CStr(m_bUseTls)
+
     If m_bUseTls Then
+        Debug.Print "cTlsSocket.OnConnect: starting TLS handshake..."
         If Not pvHandleConnect() Then
-            GoTo QH
+            sErrMsg = TlsGetLastError(m_uCtx, lErrNumber, sErrSource)
+            Debug.Print "cTlsSocket.OnConnect: TLS FAILED -> hr=&H" & Hex$(lErrNumber) & _
+                        " src=" & sErrSource & " msg=" & sErrMsg
+            pvSetLastError lErrNumber, sErrSource, sErrMsg
+	    On Error Resume Next
+	    Close_
+            Exit Sub
         End If
-    Else
-        pvFireOnConnect
+        Debug.Print "cTlsSocket.OnConnect: TLS ready; OnConnect fired by TLS path"
+        Exit Sub
     End If
-QH:
+
+    Debug.Print "cTlsSocket.OnConnect: no TLS; firing OnConnect"
+    pvFireOnConnect
     Exit Sub
+
 EH:
-    PrintError FUNC_NAME
-    Resume QH
+    Debug.Print "cTlsSocket.OnConnect: VB error " & Err.Number & " '" & Err.Description & "'"
+    On Error Resume Next
+    Close_
 End Sub
+
+
 
 Private Sub m_oAsyncSocket_OnReceive()
     Const FUNC_NAME     As String = "m_oAsyncSocket_OnReceive"
