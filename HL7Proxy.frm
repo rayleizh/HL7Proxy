@@ -39,7 +39,7 @@ Private Sub Form_Load()
     Set OutboundSinks = New Collection
 
     ' Default log file (edit if you prefer)
-    LogPath = ReadRegistryRaw("HKLM\SOFTWARE\Meridian\HL7Proxy\LogFile", "c:\temp\HL7Proxy.log")
+    LogPath = LocalLogPath(App.EXEName & ".log")  ' e.g., HL7Proxy.exe -> HL7Proxy.log
     
     WriteLog "==== HL7Proxy starting ===="
 
@@ -48,6 +48,14 @@ Private Sub Form_Load()
 
     WriteLog "==== HL7Proxy ready ===="
 End Sub
+
+Private Function LocalLogPath(ByVal FileName As String) As String
+    Dim base As String
+    base = App.Path & "\Log\HL7Proxy"
+    If Len(base) = 0 Then base = CurDir$      ' fallback, just in case
+    If Right$(base, 1) <> "\" Then base = base & "\"
+    LocalLogPath = base & FileName
+End Function
 
 Private Sub Form_Unload(Cancel As Integer)
     On Error Resume Next
@@ -91,7 +99,7 @@ Private Sub StartAllFromRegistry()
     Set services = EnumMeridianServiceKeys()   ' from modRegEnum.bas
 
     If services Is Nothing Or services.Count = 0 Then
-        WriteLog "*** No HL7Server* services found under HKLM\SOFTWARE\WOW6432Node\Meridian"
+        WriteLog "*** No HL7Server* services found under HKLM\SOFTWARE\Meridian"
         Exit Sub
     End If
 
